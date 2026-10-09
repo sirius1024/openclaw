@@ -371,8 +371,6 @@ export async function finalizeHarnessContextEngineTurn(
     sessionManager?: unknown;
     config?: OpenClawConfig;
     warn: (message: string) => void;
-    /** True when this turn belongs to a heartbeat run. */
-    isHeartbeat?: boolean;
     modelContextWindow?: number;
     turnCandidate?: {
       admission?: UserTurnTranscriptAdmissionReceipt;
@@ -403,7 +401,6 @@ export async function finalizeHarnessContextEngineTurn(
           promptError: params.promptError,
           aborted: params.aborted,
           yieldAborted: params.yieldAborted,
-          isHeartbeat: params.isHeartbeat,
           runtimeContext: {
             provider: params.providerId ?? undefined,
             modelId: params.modelId ?? undefined,
@@ -436,7 +433,6 @@ export async function finalizeHarnessContextEngineTurn(
         tokenBudget: params.tokenBudget,
         runtimeSettings,
         runtimeContext,
-        isHeartbeat: params.isHeartbeat,
       });
     } catch (afterTurnErr) {
       postTurnFinalizationSucceeded = false;
@@ -453,7 +449,6 @@ export async function finalizeHarnessContextEngineTurn(
             sessionId: params.sessionIdUsed,
             sessionKey: params.sessionKey,
             messages: newMessages,
-            isHeartbeat: params.isHeartbeat,
           });
         } catch (ingestErr) {
           postTurnFinalizationSucceeded = false;
@@ -466,7 +461,6 @@ export async function finalizeHarnessContextEngineTurn(
               sessionId: params.sessionIdUsed,
               sessionKey: params.sessionKey,
               message: msg,
-              isHeartbeat: params.isHeartbeat,
             });
           } catch (ingestErr) {
             postTurnFinalizationSucceeded = false;
