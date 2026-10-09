@@ -246,9 +246,11 @@ async function runRegisteredDreamingService(
       },
     }),
   );
-  if (!registry.services.some(({ id }) => id === "memory-core-dreaming")) {
-    throw new Error("Memory Core did not register its dreaming service");
-  }
+  const dreamingServices = registry.services.filter(({ id }) => id === "memory-core-dreaming");
+  expect(dreamingServices, "Memory Core must register exactly one dreaming service").toHaveLength(
+    1,
+  );
+  registry.services = dreamingServices;
   let services: PluginServicesHandle | undefined;
   try {
     // Gateway boot starts services without the hot-reload candidate deadline.
