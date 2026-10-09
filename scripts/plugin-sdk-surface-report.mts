@@ -223,7 +223,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: requester-bound transport effects for owner-routed plugin commands.
       // +12: async command authorization and native approval contracts (#168482).
       // +4: async conversation inspection, routing, and V2 adapter registration (#168483).
-      3672,
+      // -9: retired heartbeat reply and harness exports.
+      3663,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -242,7 +243,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: runWithLocalStateMutationOwner shares the existing transport authority scope.
       // +8: async command authorization and native approval helpers (#168482).
       // +3: async conversation inspection, routing, and V2 adapter registration (#168483).
-      2133,
+      // -4: retired heartbeat reply and harness functions.
+      2129,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
