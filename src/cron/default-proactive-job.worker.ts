@@ -11,7 +11,10 @@ import {
 import { cronStoreKey } from "./store/key.js";
 import { resolveCronJobsStorePathInDatabase } from "./store/paths.js";
 import { loadCronRows, loadedCronStoreFromRows, upsertCronJobRow } from "./store/row-codec.js";
-import type { CronRuntimeMutationContracts, CronRuntimeWorkerOperations } from "./store/runtime-worker.types.js";
+import type {
+  CronRuntimeMutationContracts,
+  CronRuntimeWorkerOperations,
+} from "./store/runtime-worker.types.js";
 
 export function provisionDefaultProactiveJobInWorker(
   database: OpenClawStateDatabase,
