@@ -1,5 +1,4 @@
-import type { CronJob } from "../types.js";
-import type { CronJobExecutionResult } from "./timer-execution-timeout.js";
+import type { CronJob, CronJobExecutionResult } from "../types.js";
 
 /** Effects or trigger evaluation consume an occurrence even if a later admission defers. */
 export function hasUnstartedCronAdmission(result: CronJobExecutionResult): boolean {
