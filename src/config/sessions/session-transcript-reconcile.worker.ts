@@ -1,19 +1,13 @@
 /** Worker entrypoint for transcript parsing and active-branch resolution only. */
 import { MessagePort } from "node:worker_threads";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { getAdmittedSqliteSchemaFacts } from "../../infra/sqlite-schema-facts.js";
 import { assertExistingDatabaseIdentity } from "../../infra/sqlite-worker-identity.js";
 import { serveWorkerTasks } from "../../infra/worker-task-server.js";
 import {
   claimOpenClawAgentDatabaseLease,
   releaseOpenClawAgentDatabaseLease,
 } from "../../state/openclaw-agent-db-lease.js";
-import {
-  hasOpenClawAgentReadOnlySchema,
-  openOpenClawAgentDatabaseReadOnly,
-} from "../../state/openclaw-agent-db-readonly-open.js";
-import { borrowOpenClawStateDatabaseForAsyncRead } from "../../state/openclaw-state-db-cache.js";
-import { assertExistingOpenClawStateRuntimeSchema } from "../../state/openclaw-state-db-existing-schema.js";
+import { openOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly-open.js";
 import { closeOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 import {
@@ -79,7 +73,7 @@ export type SessionTranscriptReconcileWorkerMessage =
   | { type: "lease-released" }
   | { type: "lease-release-failed"; error: string }
   | { type: "fts-chunk"; chunk: EncodedTranscriptFtsChunk; sessionId: string }
-  | { type: "plan-finish"; sessionId: string; remainingSessions: number }
+  | { type: "plan-finish"; sessionId: string }
   | { type: "plan-start"; plan: PreparedSessionTranscriptProjectionMetadata }
   | { type: "source-read"; sessionId: string };
 
@@ -233,7 +227,6 @@ function takeFtsChunkEnd(rows: readonly TranscriptIndexEntry[], start: number): 
 async function streamPreparedProjection(
   plan: PreparedSessionTranscriptProjection,
   port: MessagePort,
-  remainingSessions: number,
 ): Promise<boolean> {
   const { activeRows, ftsRows, ...metadata } = plan;
   if (!(await postAndWait(port, { type: "plan-start", plan: metadata })).accepted) {
@@ -264,8 +257,7 @@ async function streamPreparedProjection(
     offset = end;
   }
   return (
-    (await postAndWait(port, { type: "plan-finish", sessionId: plan.sessionId, remainingSessions }))
-      .yield === true
+    (await postAndWait(port, { type: "plan-finish", sessionId: plan.sessionId })).yield === true
   );
 }
 
@@ -334,8 +326,6 @@ async function run(
   }
   const reconcileInput = input;
   let closeDatabase: (() => void) | undefined;
-  let sharedBorrow: ReturnType<typeof borrowOpenClawStateDatabaseForAsyncRead>;
-  let assertAdmittedSchemas: (() => void) | undefined;
   let terminalMessage: Extract<
     SessionTranscriptReconcileWorkerMessage,
     { type: "done" | "failed" }
@@ -358,49 +348,18 @@ async function run(
         throw new Error(`Cannot prepare transcript indexes: ${opened.reason}`);
       }
       closeDatabase = opened.database.close;
-      assertSource();
-      if (coordination?.reconciliation) {
-        sharedBorrow = borrowOpenClawStateDatabaseForAsyncRead(coordination.databasePath);
-        if (!sharedBorrow) {
-          throw new Error("Transcript worker lost its admitted shared-state handle");
-        }
-        const shared = sharedBorrow.database;
-        const sharedSchema = getAdmittedSqliteSchemaFacts(shared.db)?.admissionId;
-        const agentSchema = getAdmittedSqliteSchemaFacts(opened.database.db)?.admissionId;
-        if (!sharedSchema || !agentSchema) {
-          throw new Error("Transcript worker cannot retain its admitted schema identities");
-        }
-        // Reentry is a new native phase, never adoption of a schema changed while yielding.
-        assertAdmittedSchemas = () => {
-          sharedBorrow?.assertCurrent();
-          if (
-            !shared.db.isOpen ||
-            getAdmittedSqliteSchemaFacts(shared.db)?.admissionId !== sharedSchema ||
-            getAdmittedSqliteSchemaFacts(opened.database.db)?.admissionId !== agentSchema
-          ) {
-            throw new Error("Transcript worker schema changed between lifecycle phases");
-          }
-          // Version/ownership publication can change without DDL or a different inode.
-          assertExistingOpenClawStateRuntimeSchema(shared.db, shared.path);
-          if (!hasOpenClawAgentReadOnlySchema(opened.database)) {
-            throw new Error("Transcript worker lost its admitted agent schema");
-          }
-        };
-      }
       return opened.database;
     });
     const sessionIds = reconcileInput.sessionIds;
     let yielded = false;
     for (const [index, sessionId] of sessionIds.entries()) {
-      assertSource();
       const plan =
         reconcileInput.mode === "memory"
           ? await prepareMemoryProjection(sessionId, port)
           : prepareSessionTranscriptProjection(database!.db, sessionId);
       if (plan) {
-        yielded = await streamPreparedProjection(plan, port, sessionIds.length - index - 1);
-        assertSource();
-        if (yielded) {
+        if (await streamPreparedProjection(plan, port)) {
+          yielded = index < sessionIds.length - 1;
           break;
         }
       }
@@ -435,12 +394,8 @@ async function run(
       });
       // Reentry obtains a fresh host grant before touching the retained native handles.
       await phase("close", () => {
-        assertSource();
-        assertAdmittedSchemas?.();
         if (coordination?.reconciliation) {
           closeDatabase?.();
-          sharedBorrow?.release();
-          sharedBorrow = undefined;
         }
         releaseLease(reconcileInput, port, closeDatabase !== undefined);
       });
