@@ -669,43 +669,22 @@ export async function readGenericCurrentConversationBindingSelectionAsync(
 /** Plugin eligibility is evaluated only after native listing has settled. */
 export async function listGenericCurrentConversationBindingsBySessionsAsync(
   targetSessionKeys: readonly string[],
-  options: { assertCurrent?: () => void; context: OpenClawStateWorkerContext },
+  context: OpenClawStateWorkerContext,
 ): Promise<SessionBindingRecord[][]> {
-  const registry = getActivePluginChannelRegistrySnapshotFromState();
-  const assertCurrent = () => {
-    options?.assertCurrent?.();
-    if (getActivePluginChannelRegistrySnapshotFromState() !== registry) {
-      throw new SessionBindingError(
-        "BINDING_ADAPTER_UNAVAILABLE",
-        "Generic conversation binding owners changed during destination listing",
-      );
-    }
-  };
-  assertCurrent();
   const records = await listCurrentConversationBindingRecordsBySessionsAsync(
     targetSessionKeys,
     undefined,
-    assertCurrent,
-    options.context,
+    undefined,
+    context,
   );
-  assertCurrent();
-  const supports: ReturnType<typeof captureGenericBindingSupport>[] = [];
-  const selected = records.map((entries) =>
+  return records.map((entries) =>
     entries.filter((record) => {
       if (!record.bindingId.startsWith(CURRENT_BINDINGS_ID_PREFIX)) {
         return false;
       }
-      const support = captureGenericBindingSupport(record.conversation);
-      supports.push(support);
-      assertCurrent();
-      return support.supported;
+      return supportsGenericCurrentConversationBinding(record.conversation);
     }),
   );
-  assertCurrent();
-  for (const support of supports) {
-    support.assertCurrent();
-  }
-  return selected;
 }
 
 export async function touchGenericCurrentConversationBindingAsync(
