@@ -177,6 +177,7 @@ describe("memory search reindex backoff", () => {
       expect(manager.status().lastSyncError).toContain("queued rebuild failed");
       const embedding = vi.fn(async () => {});
       fixture.provider.beforeEmbedBatch = embedding;
+      fixture.provider.embeddedBatchTexts = [];
       await fixture.seedSessionTranscript({
         sessionId,
         sessionKey,
@@ -187,7 +188,13 @@ describe("memory search reindex backoff", () => {
       expect(unqueuedChunks()).toHaveLength(0);
       now += 30_000;
       await manager.sync({ reason: "search" });
-      expect(embedding).toHaveBeenCalledTimes(1);
+      expect(fixture.provider.embeddedBatchTexts).toHaveLength(2);
+      expect(fixture.provider.embeddedBatchTexts).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("Jade pending marker."),
+          expect.stringContaining("Topaz full rebuild marker."),
+        ]),
+      );
       expect(unqueuedChunks()).toHaveLength(1);
       expect(manager.status().lastSyncError).toBeUndefined();
       expect(

@@ -5,6 +5,7 @@ import { getSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { effectiveGuardPolicyVersion, generateIdentity } from "../protocol/index.js";
 import { MemoryAuditStore, MemoryReplayStore } from "../protocol/memory-stores.test-support.js";
+import { openReefAuditStore } from "./audit-state.js";
 import { isPermanentReefOutboundRejection, ReefMessageFlow } from "./flow.js";
 import {
   allow,
@@ -88,19 +89,13 @@ describe("ReefMessageFlow send recovery", () => {
         keys,
         transport: relay,
         guard: guard(allow),
-        audit: new MemoryAuditStore(new Uint8Array(32).fill(7)),
+        audit: openReefAuditStore(stores.runtime, new Uint8Array(32).fill(7)),
         replay: new MemoryReplayStore(),
         ...stores,
         onIngress,
         onOwnerNotice: async () => {},
       });
-      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() - 12 * 60_000);
-      let id: string;
-      try {
-        id = await flow.send("alice", PAIRING_APPROVED_MESSAGE);
-      } finally {
-        clock.mockRestore();
-      }
+      const id = await flow.send("alice", PAIRING_APPROVED_MESSAGE);
       expect(sendEnvelope).toHaveBeenCalledOnce();
       expect(onIngress).not.toHaveBeenCalled();
       expect(getSessionEntry(sessionScope)).toBeUndefined();
@@ -119,7 +114,12 @@ describe("ReefMessageFlow send recovery", () => {
         cfg: hostConfig,
         handle: "bob",
       });
-      await notifyOverdueReefDeliveries({ trust: trusted, ownerNotice });
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 12 * 60_000);
+      try {
+        await notifyOverdueReefDeliveries({ trust: trusted, ownerNotice });
+      } finally {
+        clock.mockRestore();
+      }
       if (revoked) {
         expect(stores.runtime.system.captureSessionEventTarget).not.toHaveBeenCalled();
         expect(stores.runtime.system.enqueueSessionEvent).not.toHaveBeenCalled();

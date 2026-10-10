@@ -2,7 +2,6 @@
 import fs from "node:fs/promises";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
-import type { CronCreatorAuthorityCapability } from "../../agents/cron-creator-authority-context.js";
 import {
   createAgentRunDirectAbortError,
   createAgentRunRestartAbortError,
@@ -18,7 +17,7 @@ import {
 import { createDeferredCore } from "../../shared/deferred.js";
 import { useSessionStoreTempDirs } from "../../test-utils/session-state-cleanup.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
-import { registerAgentProjectionFixtureTests } from "./agent.projection-fixture.test-support.js";
+import { registerAgentCreatorAuthorityTests } from "./agent.creator-authority.test-support.js";
 import {
   getAgentTestMocks,
   makeContext,
@@ -56,7 +55,76 @@ const mocks = getAgentTestMocks();
 describe("gateway agent handler", () => {
   const sessionDirs = useSessionStoreTempDirs(afterAll, "openclaw-gateway-agent-base-");
   afterEach(describe0AfterEach0);
-  registerAgentProjectionFixtureTests();
+  it.each(["cleared", "no-op", "discarded result"])(
+    "returns the replacement projection result with a %s store fixture",
+    async (mode) => {
+      mocks.updateSessionStore.mockReset();
+      if (mode === "no-op") {
+        mocks.updateSessionStore.mockResolvedValue(undefined);
+      } else if (mode === "discarded result") {
+        mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
+          await updater({});
+        });
+      }
+      const result = { transition: "empty-fixture" };
+      const update = vi.fn(async () => ({ result }));
+
+      await expect(
+        mocks.applySessionEntryReplacements({ storePath: "/tmp/sessions.json", update }),
+      ).resolves.toBe(result);
+      expect(update).toHaveBeenCalledOnce();
+      expect(update).toHaveBeenCalledWith([]);
+    },
+  );
+
+  it("keeps backing store replacements when its delegate discards the result", async () => {
+    const sessionKey = "agent:main:main";
+    const entry = { sessionId: "session-1", updatedAt: 1 };
+    const store = { [sessionKey]: entry };
+    const replacement = { ...entry, updatedAt: 2 };
+    const result = { transition: "replaced" };
+    mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
+      await updater(store);
+    });
+    const update = vi.fn(async () => ({
+      replacements: [{ sessionKey, entry: replacement }],
+      result,
+    }));
+
+    await expect(
+      mocks.applySessionEntryReplacements({
+        storePath: "/tmp/sessions.json",
+        sessionKeys: [sessionKey],
+        update,
+      }),
+    ).resolves.toBe(result);
+    expect(update).toHaveBeenCalledWith([{ sessionKey, entry }]);
+    expect(store[sessionKey]).toEqual(replacement);
+    expect(store[sessionKey]).not.toBe(replacement);
+  });
+
+  it("does not repeat a replacement projection whose result is undefined", async () => {
+    mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
+      await updater({});
+    });
+    const update = vi.fn(async () => ({ result: undefined }));
+
+    await expect(
+      mocks.applySessionEntryReplacements({ storePath: "/tmp/sessions.json", update }),
+    ).resolves.toBeUndefined();
+    expect(update).toHaveBeenCalledOnce();
+  });
+
+  it("does not run a replacement projection after its store fixture rejects", async () => {
+    const failure = new Error("fixture write rejected");
+    mocks.updateSessionStore.mockRejectedValueOnce(failure);
+    const update = vi.fn(async () => ({ result: "unexpected projection" }));
+
+    await expect(
+      mocks.applySessionEntryReplacements({ storePath: "/tmp/sessions.json", update }),
+    ).rejects.toBe(failure);
+    expect(update).not.toHaveBeenCalled();
+  });
 
   it("passes resolved maintenance config to the gateway admission store write", async () => {
     primeMainAgentRun({
@@ -81,35 +149,7 @@ describe("gateway agent handler", () => {
     });
   });
 
-  it("carries exact cron creator authority through direct local agent RPC", async () => {
-    const runId = "direct-agent-cron-authority";
-    let capability: CronCreatorAuthorityCapability | undefined;
-    primeMainAgentRun();
-    mocks.agentCommand.mockImplementation(async (opts: AgentCommandCall) => {
-      capability = opts.cronCreatorAuthorityCapability as
-        | CronCreatorAuthorityCapability
-        | undefined;
-      expect(capability).toMatchObject({ active: true, runId });
-      return { payloads: [{ text: "ok" }], meta: { durationMs: 100 } };
-    });
-
-    await invokeAgent(
-      {
-        message: "create an automation",
-        agentId: "main",
-        sessionKey: "agent:main:main",
-        idempotencyKey: runId,
-      },
-      {
-        client: {
-          ...operatorWriteCliClient(["operator.admin"]),
-          internal: { isLocalClient: true },
-        } as AgentHandlerArgs["client"],
-      },
-    );
-
-    await waitForAssertion(() => expect(capability?.active).toBe(false));
-  });
+  registerAgentCreatorAuthorityTests();
 
   it("resolves explicit recipient sessions before Gateway admission", async () => {
     const sessionKey = "agent:ops:whatsapp:work:direct:+15551234567";

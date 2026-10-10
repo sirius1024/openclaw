@@ -8,26 +8,26 @@ type BlockingField = {
   inputId: string;
 };
 
-const CRON_FIELD_LABEL_KEYS: Record<CronFieldKey, string> = {
-  name: "cron.form.fieldName",
-  scheduleAt: "cron.form.runAt",
-  everyAmount: "cron.form.every",
-  cronExpr: "cron.form.expression",
-  staggerAmount: "cron.form.staggerWindow",
-  activeHoursStart: "cron.form.activeHoursStart",
-  activeHoursEnd: "cron.form.activeHoursEnd",
-  activeHoursTimezone: "cron.form.timezoneOptional",
-  triggerScript: "cron.form.triggerScript",
-  payloadText: "cron.form.assistantTaskPrompt",
-  payloadModel: "cron.form.model",
-  payloadThinking: "cron.form.thinking",
-  timeoutSeconds: "cron.form.timeoutSeconds",
-  deliveryMode: "cron.form.deliveryModeLabel",
-  deliveryDirectPolicy: "cron.form.directPolicy",
-  deliveryTo: "cron.form.to",
-  failureAlertAfter: "cron.form.failureAlertAfter",
-  failureAlertCooldownSeconds: "cron.form.failureAlertCooldown",
-};
+const CRON_FIELD_LABELS: ReadonlyArray<readonly [CronFieldKey, string]> = [
+  ["name", "cron.form.fieldName"],
+  ["scheduleAt", "cron.form.runAt"],
+  ["everyAmount", "cron.form.every"],
+  ["cronExpr", "cron.form.expression"],
+  ["staggerAmount", "cron.form.staggerWindow"],
+  ["activeHoursStart", "cron.form.activeHoursStart"],
+  ["activeHoursEnd", "cron.form.activeHoursEnd"],
+  ["activeHoursTimezone", "cron.form.timezoneOptional"],
+  ["triggerScript", "cron.form.triggerScript"],
+  ["payloadText", "cron.form.assistantTaskPrompt"],
+  ["payloadModel", "cron.form.model"],
+  ["payloadThinking", "cron.form.thinking"],
+  ["timeoutSeconds", "cron.form.timeoutSeconds"],
+  ["deliveryMode", "cron.form.deliveryModeLabel"],
+  ["deliveryDirectPolicy", "cron.form.directPolicy"],
+  ["deliveryTo", "cron.form.to"],
+  ["failureAlertAfter", "cron.form.failureAlertAfter"],
+  ["failureAlertCooldownSeconds", "cron.form.failureAlertCooldown"],
+];
 
 export function errorIdForField(key: CronFieldKey) {
   return `cron-error-${key}`;
@@ -39,6 +39,7 @@ export function inputIdForField(key: string) {
 
 function fieldLabelForKey(
   key: CronFieldKey,
+  labelKey: string,
   form: CronFormState,
   deliveryMode: CronFormState["deliveryMode"],
 ) {
@@ -48,7 +49,7 @@ function fieldLabelForKey(
   if (key === "deliveryTo" && deliveryMode === "webhook") {
     return t("cron.form.webhookUrl");
   }
-  return t(CRON_FIELD_LABEL_KEYS[key]);
+  return t(labelKey);
 }
 
 export function collectBlockingFields(
@@ -56,12 +57,12 @@ export function collectBlockingFields(
   form: CronFormState,
   deliveryMode: CronFormState["deliveryMode"],
 ): BlockingField[] {
-  return (Object.keys(CRON_FIELD_LABEL_KEYS) as CronFieldKey[]).flatMap((key) => {
+  return CRON_FIELD_LABELS.flatMap(([key, labelKey]) => {
     const message = errors[key];
     return message
       ? [
           {
-            label: fieldLabelForKey(key, form, deliveryMode),
+            label: fieldLabelForKey(key, labelKey, form, deliveryMode),
             message,
             inputId: inputIdForField(key),
           },
