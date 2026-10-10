@@ -300,7 +300,7 @@ class PersonReference extends OpenClawLightDomContentsElement {
   }
 
   override render() {
-    // The avatar route follows merged profiles; rendering a mention needs no directory read.
+    // Mentions carry identity, not avatar availability; directory reads belong to the card.
     const avatar = resolveIdentityAvatarView({
       id: this.profileId,
       identity: { type: "profile", id: this.profileId },
