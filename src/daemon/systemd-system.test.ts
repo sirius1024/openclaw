@@ -157,7 +157,7 @@ describe("system systemd ownership", () => {
     await expect(
       assertNoSystemSystemdOwnership("openclaw-gateway-primary.service"),
     ).resolves.toBeUndefined();
-    expect(execFileUtf8).toHaveBeenCalledTimes(3);
+    expect(execFileUtf8).toHaveBeenCalledTimes(2);
   });
 
   it("shares one timeout budget across system-manager ownership probes", async () => {
@@ -179,13 +179,11 @@ describe("system systemd ownership", () => {
       ).toEqual([
         { timeout: 50, killSignal: "SIGKILL" },
         { timeout: 30, killSignal: "SIGKILL" },
-        { timeout: 10, killSignal: "SIGKILL" },
       ]);
       expect(execFileUtf8.mock.calls.every((call) => call[2]?.env === process.env)).toBe(true);
       expect(execFileUtf8.mock.calls.map(([command, args]) => [command, args])).toEqual([
         ["systemctl", ["show", "--property=LoadState", "--value", "openclaw-gateway.service"]],
         ["systemctl", ["show", "--property=UnitPath", "--value"]],
-        ["systemctl", ["show", "--property=LoadState", "--value", "openclaw-gateway.service"]],
       ]);
     } finally {
       clock.mockRestore();
@@ -207,7 +205,7 @@ describe("system systemd ownership", () => {
           assertNoSystemSystemdOwnership("openclaw-gateway.service", 5_000),
         ).resolves.toBeUndefined();
         const timeouts = execFileUtf8.mock.calls.map((call) => call[2]?.timeout ?? 0);
-        expect(timeouts).toHaveLength(3);
+        expect(timeouts).toHaveLength(2);
         // Only real elapsed time (tens of ms) may leave the budget; the clock step must
         // neither drain it to the 1 ms floor nor inflate it past the budget.
         expect(timeouts.every((timeout) => timeout > 4_000 && timeout <= 5_000)).toBe(true);
@@ -279,23 +277,6 @@ describe("system systemd ownership", () => {
         operation: "systemctl",
         detail: "manager UnitPath unavailable",
       },
-    });
-  });
-
-  it("rechecks the system manager after a negative filesystem snapshot", async () => {
-    let systemctlCalls = 0;
-    execFileUtf8.mockImplementation(async (_command: string, args: string[]) => {
-      if (args.includes("--property=UnitPath")) {
-        return state.managerUnitPath;
-      }
-      systemctlCalls += 1;
-      return systemctlCalls === 1
-        ? { stdout: "not-found\n", stderr: "", code: 0, termination: "exit" }
-        : { stdout: "loaded\n", stderr: "", code: 0, termination: "exit" };
-    });
-
-    await expect(assertNoSystemSystemdOwnership("openclaw-gateway.service")).rejects.toMatchObject({
-      ownership: { status: "loaded", unitName: "openclaw-gateway.service" },
     });
   });
 

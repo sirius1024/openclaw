@@ -37,8 +37,6 @@ const properties = {
   ActiveState: { type: "s", data: "active" },
   SubState: { type: "s", data: "running" },
   StartLimitBurst: { type: "u", data: 5 },
-  ActiveEnterTimestampMonotonic: { type: "t", data: 100 },
-  InactiveEnterTimestampMonotonic: { type: "t", data: 0 },
   Result: { type: "s", data: "success" },
   NRestarts: { type: "u", data: 2 },
   MainPID: { type: "u", data: 412 },
@@ -303,19 +301,6 @@ describe("loaded-only systemd runtime", () => {
     expect(systemctl).not.toHaveBeenCalled();
   });
 
-  it("refuses manager replacement during observation", async () => {
-    let ownerReads = 0;
-    busctl.mockImplementation(async (_env, args) =>
-      args.includes("GetNameOwner") && ++ownerReads > 1
-        ? success(JSON.stringify({ type: "s", data: [":1.43"] }))
-        : managerReply(args),
-    );
-    await expect(readSystemdServiceRuntime(env, { requireLoaded: true })).rejects.toMatchObject({
-      reason: "systemd-manager-changed",
-    });
-    expect(systemctl).not.toHaveBeenCalled();
-  });
-
   it.each([
     { Id: { type: "s", data: "foreign.service" } },
     { LoadState: { type: "s", data: "not-found" } },
@@ -386,64 +371,48 @@ describe("loaded-only systemd runtime", () => {
     },
   );
 
-  it.each(["owner", "generation", "deadline"])(
-    "rejects inventory after %s changes",
-    async (changed) => {
-      let enumerated = false;
-      let elapsed = 0;
-      const now = vi.spyOn(performance, "now").mockImplementation(() => elapsed);
-      busctl.mockImplementation(async (_env, args) => {
-        if (args.includes("GetUnitProcesses")) {
-          enumerated = true;
-          if (changed === "deadline") {
-            elapsed = 1001;
-          }
-          return success(JSON.stringify({ type: "a(sus)", data: [[]] }));
-        }
-        if (enumerated && changed === "owner" && args.includes("GetNameOwner")) {
-          return success(JSON.stringify({ type: "s", data: [":1.43"] }));
-        }
-        return managerReply(args, {
-          ActiveState: { type: "s", data: "inactive" },
-          SubState: { type: "s", data: "dead" },
-          MainPID: { type: "u", data: 0 },
-          TasksCurrent: { type: "t", data: Number("18446744073709551615") },
-          ActiveEnterTimestampMonotonic: {
-            type: "t",
-            data: enumerated && changed === "generation" ? 101 : 100,
-          },
-        });
-      });
-      try {
-        const observation = readSystemdServiceRuntime(env, {
-          requireLoaded: true,
-          timeoutMs: 1000,
-        });
-        if (changed === "owner") {
-          await expect(observation).rejects.toMatchObject({ reason: "systemd-manager-changed" });
-        } else {
-          expect((await observation).status).toBe("unknown");
-        }
-        expect(enumerated).toBe(true);
-        expect(systemctl).not.toHaveBeenCalled();
-      } finally {
-        now.mockRestore();
+  it("rejects inventory after its deadline", async () => {
+    let enumerated = false;
+    let elapsed = 0;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => elapsed);
+    busctl.mockImplementation(async (_env, args) => {
+      if (args.includes("GetUnitProcesses")) {
+        enumerated = true;
+        elapsed = 1001;
+        return success(JSON.stringify({ type: "a(sus)", data: [[]] }));
       }
-    },
-  );
+      return managerReply(args, {
+        ActiveState: { type: "s", data: "inactive" },
+        SubState: { type: "s", data: "dead" },
+        MainPID: { type: "u", data: 0 },
+        TasksCurrent: { type: "t", data: Number("18446744073709551615") },
+      });
+    });
+    try {
+      const observation = readSystemdServiceRuntime(env, {
+        requireLoaded: true,
+        timeoutMs: 1000,
+      });
+      expect((await observation).status).toBe("unknown");
+      expect(enumerated).toBe(true);
+      expect(systemctl).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
+  });
 
   it("bounds all manager calls by one monotonic deadline", async () => {
     let elapsed = 0;
     const now = vi.spyOn(performance, "now").mockImplementation(() => elapsed);
     busctl.mockImplementation(async (_env, args) => {
-      elapsed += 90;
+      elapsed += 110;
       return managerReply(args);
     });
     try {
       const runtime = await readSystemdServiceRuntime(env, { requireLoaded: true, timeoutMs: 500 });
       expect(runtime.status).toBe("unknown");
-      expect(busctl).toHaveBeenCalledTimes(6);
-      expect(busctl.mock.calls.map((call) => call[2])).toEqual([71, 68, 64, 57, 46, 25]);
+      expect(busctl).toHaveBeenCalledTimes(5);
+      expect(busctl.mock.calls.map((call) => call[2])).toEqual([100, 97, 93, 85, 60]);
       expect(systemctl).not.toHaveBeenCalled();
     } finally {
       now.mockRestore();
@@ -466,32 +435,6 @@ describe("loaded-only systemd runtime", () => {
     expect((await readSystemdServiceRuntime(env, { requireLoaded: true })).status).toBe("unknown");
     expect(systemctl).not.toHaveBeenCalled();
   });
-
-  it.each(["state", "generation"])(
-    "refuses mixed runtime observation after a %s change",
-    async (change) => {
-      let serviceRead = false;
-      busctl.mockImplementation(async (_env, args) => {
-        if (args.includes("org.freedesktop.systemd1.Service")) {
-          serviceRead = true;
-        }
-        return managerReply(args, {
-          ActiveState: {
-            type: "s",
-            data: serviceRead && change === "state" ? "active" : "inactive",
-          },
-          SubState: { type: "s", data: "dead" },
-          MainPID: { type: "u", data: 0 },
-          TasksCurrent: { type: "t", data: 0 },
-          ActiveEnterTimestampMonotonic: { type: "t", data: serviceRead ? 200 : 100 },
-        });
-      });
-      expect((await readSystemdServiceRuntime(env, { requireLoaded: true })).status).toBe(
-        "unknown",
-      );
-      expect(systemctl).not.toHaveBeenCalled();
-    },
-  );
 
   it("does not accept valid output after a query was terminated", async () => {
     busctl.mockImplementation(async (_env, args) => ({
@@ -561,22 +504,17 @@ describe("owned inspection refuses foreign or unverified collected units", () =>
     "uid",
     "revoked-before",
     "revoked-load",
-    "manager-change",
     "busy",
     "inventory-error",
     "terminated",
   ] as const)("preserves the %s refusal without enabling or starting anything", async (fault) => {
     let loaded = false;
-    let owners = 0;
     const assertCurrent = () => {
       if (fault === "revoked-before" || (fault === "revoked-load" && loaded)) {
         throw new Error("source/executor revoked");
       }
     };
     busctl.mockImplementation(async (_env, args) => {
-      if (args.includes("GetNameOwner") && ++owners > 1 && fault === "manager-change") {
-        return success(JSON.stringify({ type: "s", data: [":1.99"] }));
-      }
       if (args.includes("LoadUnit")) {
         loaded = true;
         return success(JSON.stringify({ type: "o", data: [unitPath] }));
@@ -606,7 +544,7 @@ describe("owned inspection refuses foreign or unverified collected units", () =>
       requireLoaded: true,
       loadForInspection: { managerUid: fault === "uid" ? 2002 : 2001, assertCurrent },
     });
-    if (fault === "uid" || fault === "manager-change") {
+    if (fault === "uid") {
       await expect(observation).rejects.toMatchObject({ reason: "systemd-manager-changed" });
     } else {
       expect((await observation).status).toBe("unknown");

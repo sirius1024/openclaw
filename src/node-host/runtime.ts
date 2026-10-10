@@ -15,7 +15,6 @@ import { logDebug } from "../logger.js";
 import type { OpenClawPluginNodeHostCommandIo } from "../plugins/types.js";
 import type { OpenClawPluginNodeHostCommandContext } from "../plugins/types.node-host.js";
 import { BoundedBuffer } from "../shared/bounded-buffer.js";
-import { createDeferredCore } from "../shared/deferred.js";
 import { NODE_DESKTOP_STREAM_COMMAND } from "../shared/node-desktop-stream.js";
 import { throwNodeHostCleanupErrors } from "./cleanup-errors.js";
 import { createNodeInvokeResponder, type NodeHostClient } from "./client.js";
@@ -623,38 +622,41 @@ export async function prepareNodeHostRuntime(params?: {
           }
           const wasClosing = closing;
           closing = true;
-          // Install the shared completion before abort listeners or cleanup can reenter close.
-          const completion = createDeferredCore();
-          closePromise = completion.promise;
-          const closeOwners = async () => {
-            if (!wasClosing && initializationRetry) {
-              clearTimeout(initializationRetry);
-              initializationRetry = undefined;
-            }
-            if (!wasClosing || disconnectCleanupFailed) {
-              // cancelAll publishes the cleanup barrier joined below.
-              void this.cancelAll();
-            }
-            const watcherClose = stopAvailabilityWatch();
-            // Startup observes this signal before either independent owner is joined.
-            mcpAbort.abort();
-            const disconnectClose = disconnectCleanup;
-            supervisorClose ??= Promise.resolve()
-              .then(() => workerSupervisor?.close())
-              .catch((error: unknown) => {
-                // The supervisor retains failed retirement records and an open journal for retry.
-                supervisorClose = undefined;
-                throw error;
-              });
-            // MCP close is terminal: another call after failure can return an empty success.
-            mcpClose ??= startup.then((resolved) => resolved?.close());
-            await settleNodeHostCleanup([watcherClose, disconnectClose, supervisorClose, mcpClose]);
-          };
-          void closeOwners().then(completion.resolve, (error: unknown) => {
-            closePromise = undefined;
-            completion.reject(error);
-          });
-          return completion.promise;
+          closePromise = Promise.resolve()
+            .then(async () => {
+              if (!wasClosing && initializationRetry) {
+                clearTimeout(initializationRetry);
+                initializationRetry = undefined;
+              }
+              if (!wasClosing || disconnectCleanupFailed) {
+                // cancelAll publishes the cleanup barrier joined below.
+                void this.cancelAll();
+              }
+              const watcherClose = stopAvailabilityWatch();
+              // Startup observes this signal before either independent owner is joined.
+              mcpAbort.abort();
+              const disconnectClose = disconnectCleanup;
+              supervisorClose ??= Promise.resolve()
+                .then(() => workerSupervisor?.close())
+                .catch((error: unknown) => {
+                  // The supervisor retains failed retirement records and an open journal for retry.
+                  supervisorClose = undefined;
+                  throw error;
+                });
+              // MCP close is terminal: another call after failure can return an empty success.
+              mcpClose ??= startup.then((resolved) => resolved?.close());
+              await settleNodeHostCleanup([
+                watcherClose,
+                disconnectClose,
+                supervisorClose,
+                mcpClose,
+              ]);
+            })
+            .catch((error: unknown) => {
+              closePromise = undefined;
+              throw error;
+            });
+          return closePromise;
         },
       };
     },

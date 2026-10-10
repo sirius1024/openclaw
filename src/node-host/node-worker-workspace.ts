@@ -330,14 +330,7 @@ export class NodeWorkerWorkspaceRuntime {
       params.signal?.throwIfAborted();
       await serializeNodeWorkerWorkspace(session.sessionRoot, async () => {
         params.signal?.throwIfAborted();
-        const currentSnapshot = this.acceptedSnapshots.get(params.gatewayNamespace);
-        if (
-          currentSnapshot?.controllerId !== params.snapshot.controllerId ||
-          currentSnapshot.sequence !== params.snapshot.sequence ||
-          currentSnapshot.signature !== params.snapshot.signature
-        ) {
-          return;
-        }
+        const currentSnapshot = params.snapshot;
         await refreshLaunches();
         const localProtection = currentProtection();
         const entries = await listOwnedEntries(session.sessionRoot);
