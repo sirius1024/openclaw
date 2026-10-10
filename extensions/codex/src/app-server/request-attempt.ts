@@ -16,11 +16,8 @@ type CodexRequestWaitOptions = {
 type RequestWaiter = {
   resolve: (value: unknown) => void;
   reject: (error: Error, outcome: CodexRequestWaiterOutcome) => void;
-  signal?: AbortSignal;
-  deadline?: number;
 };
 
-type WaiterFailure = { error: Error; outcome: CodexRequestWaiterOutcome };
 type AttemptDiagnostics = Pick<
   CodexRequestWaiterSummary,
   | "clientInstanceId"
@@ -39,7 +36,7 @@ export type CodexRequestAttemptObservation =
 export type CodexRequestAttempt = {
   readonly method: string;
   readonly pending: boolean;
-  wait: <T>(options: CodexRequestWaitOptions, deadline?: number) => Promise<T>;
+  wait: <T>(options: CodexRequestWaitOptions) => Promise<T>;
   resolve: (value: unknown) => void;
   reject: (error: Error, definitelyNotEnqueued?: boolean) => void;
   close: (error: Error) => void;
@@ -50,14 +47,11 @@ export type CodexRequestAttempt = {
 /** One caller per wire attempt; local waiter expiry need not imply a native response. */
 export function createCodexRequestAttempt(params: {
   method: string;
-  retainWritten: boolean;
   /** Only catalog requests retain these scalar facts across unobserved waiters. */
   diagnosticIdentity?: Pick<CodexRequestWaiterSummary, "clientInstanceId" | "rpcId">;
   observe?: (event: CodexRequestAttemptObservation) => void;
   onSettled: () => void;
   onIngressRejected?: () => void;
-  /** A correlated native response, never local cancellation or transport closure. */
-  onResponse?: (mayHaveWritten: boolean) => void;
   cancellationError: (
     reason: "aborted" | "timed out",
     mayHaveWritten: boolean,
@@ -97,27 +91,12 @@ export function createCodexRequestAttempt(params: {
     params.onSettled();
     return true;
   };
-  const currentWaiterError = (): WaiterFailure | undefined => {
-    if (!params.retainWritten || !waiter) {
-      return undefined;
-    }
-    if (waiter.signal?.aborted) {
-      return {
-        error: params.cancellationError("aborted", mayHaveWritten, waiter.signal.reason),
-        outcome: "aborted",
-      };
-    }
-    if (waiter.deadline !== undefined && performance.now() >= waiter.deadline) {
-      return { error: params.cancellationError("timed out", mayHaveWritten), outcome: "timed-out" };
-    }
-    return undefined;
-  };
   return {
     method: params.method,
     get pending() {
       return pending;
     },
-    wait<T>(options: CodexRequestWaitOptions, deadline?: number) {
+    wait<T>(options: CodexRequestWaitOptions) {
       const { timeoutMs, signal, overloadAttemptOrdinal } = options;
       let observe = options.attemptWaiterFinished;
       return new Promise<T>((resolve, reject) => {
@@ -137,9 +116,7 @@ export function createCodexRequestAttempt(params: {
           timer = undefined;
           removeAbort?.();
           removeAbort = undefined;
-          if (!params.retainWritten || !mayHaveWritten) {
-            finish(mayHaveWritten ? "correlation-closed" : "not-written");
-          }
+          finish(mayHaveWritten ? "correlation-closed" : "not-written");
           observeAttempt({ kind: "waiter", outcome: waiterOutcome });
           const callback = observe;
           observe = undefined;
@@ -173,26 +150,16 @@ export function createCodexRequestAttempt(params: {
               reject(error);
             }
           },
-          signal,
-          deadline,
         };
         waiter = localWaiter;
-        if (params.retainWritten && deadline !== undefined && performance.now() >= deadline) {
-          localWaiter.reject(params.cancellationError("timed out", mayHaveWritten), "timed-out");
-          return;
-        }
         if (timeoutMs && Number.isFinite(timeoutMs) && timeoutMs > 0) {
-          const remaining =
-            params.retainWritten && deadline !== undefined
-              ? deadline - performance.now()
-              : timeoutMs;
           timer = setTimeout(
             () =>
               localWaiter.reject(
                 params.cancellationError("timed out", mayHaveWritten),
                 "timed-out",
               ),
-            Math.max(params.retainWritten ? 1 : 100, remaining),
+            Math.max(100, timeoutMs),
           );
           timer.unref?.();
         }
@@ -214,13 +181,7 @@ export function createCodexRequestAttempt(params: {
       if (!finish("native-ok")) {
         return;
       }
-      params.onResponse?.(mayHaveWritten);
-      const error = currentWaiterError();
-      if (error) {
-        waiter?.reject(error.error, error.outcome);
-      } else {
-        waiter?.resolve(value);
-      }
+      waiter?.resolve(value);
     },
     reject(error, definitelyNotEnqueued = false) {
       if (finish(definitelyNotEnqueued ? "ingress-rejected" : "native-error")) {
@@ -230,14 +191,11 @@ export function createCodexRequestAttempt(params: {
           mayHaveWritten = false;
           params.onIngressRejected?.();
         }
-        params.onResponse?.(mayHaveWritten);
-        const current = currentWaiterError();
         waiter?.reject(
-          current?.error ??
-            (error instanceof CodexAppServerRpcError
-              ? error
-              : params.localError(error, mayHaveWritten)),
-          current?.outcome ?? "native-error",
+          error instanceof CodexAppServerRpcError
+            ? error
+            : params.localError(error, mayHaveWritten),
+          "native-error",
         );
       }
     },
@@ -251,9 +209,7 @@ export function createCodexRequestAttempt(params: {
       if (!pending) {
         return;
       }
-      if (!params.retainWritten || !mayHaveWritten) {
-        finish(mayHaveWritten ? "correlation-closed" : "not-written");
-      }
+      finish(mayHaveWritten ? "correlation-closed" : "not-written");
       waiter?.reject(params.localError(error, mayHaveWritten), "local-failed");
     },
     markWritten() {
