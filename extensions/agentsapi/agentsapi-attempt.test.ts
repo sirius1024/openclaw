@@ -436,6 +436,7 @@ describe("Agents API retry prompt history", () => {
         target: fixture.target,
         input: { text: "Use the updated result.", idempotencyKey: "steering-user" },
       });
+      const readHistory = vi.spyOn(SessionManager, "openModelContextAsync");
       const histories: unknown[][] = [];
       const promptHook = vi
         .fn()
@@ -506,6 +507,7 @@ describe("Agents API retry prompt history", () => {
       expect(histories).toEqual([
         [expect.objectContaining({ role: "user", content: "Earlier request." })],
       ]);
+      expect(readHistory).toHaveBeenCalledTimes(1);
       expect(steering.getPersistedMessage?.()).toMatchObject({
         __openclaw: { steerTargetRunId: fixture.params.runId },
       });
@@ -534,6 +536,8 @@ describe("Agents API retry prompt history", () => {
             : { kind: "failed", source: "prompt", error: interruption },
         );
         expect(createSession).toHaveBeenCalledTimes(1);
+        expect(readHistory).toHaveBeenCalledTimes(1);
+        expect(histories).toHaveLength(1);
         return;
       }
 
@@ -542,6 +546,10 @@ describe("Agents API retry prompt history", () => {
       expect(historyReads).toHaveBeenCalledTimes(retryScope === "same run" ? 0 : 1);
       expect(retried.terminal).toEqual({ kind: "ok" });
       expect(retried.assistantTexts).toEqual(["The completed answer."]);
+      // Steering correlation preserves the admitted input; changed scopes must read it afresh.
+      const expectedHistoryReads = retryScope === "same run" ? 1 : 2;
+      expect(readHistory).toHaveBeenCalledTimes(expectedHistoryReads);
+      expect(createSession).toHaveBeenCalledTimes(2);
       expect(histories[1]).toEqual([
         expect.objectContaining({ role: "user", content: "Earlier request." }),
       ]);
@@ -583,6 +591,8 @@ describe("Agents API retry prompt history", () => {
       await nextTurn.persistApproved();
       fixture.params.userTurnTranscriptRecorder = nextTurn;
       expect((await fixture.run()).terminal).toEqual({ kind: "ok" });
+      expect(readHistory).toHaveBeenCalledTimes(expectedHistoryReads + 1);
+      expect(createSession).toHaveBeenCalledTimes(3);
       expect(histories[2]).toEqual([
         expect.objectContaining({ role: "user", content: "Earlier request." }),
         expect.objectContaining({

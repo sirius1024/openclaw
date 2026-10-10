@@ -254,7 +254,7 @@ export function registerLegacyDriverTests(modes: readonly LegacyDriverMode[]) {
               throw new Error("Could not initialize isolated fixture handoff");
             }
             const { pid, startIdentity } = store.processIdentity();
-            managedRow = {
+            const row = {
               owner: "shipped-owner",
               payload_json: JSON.stringify({ version: 1, pid, startIdentity }),
               updated_at: 7,
