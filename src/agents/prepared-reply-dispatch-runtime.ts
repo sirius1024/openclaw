@@ -1,7 +1,6 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createAbortError, racePromiseWithAbortSignal } from "../infra/abort-signal.js";
 import { resolvePublishedModelCatalogOwner } from "./prepared-model-catalog-owner.js";
-import { assertPreparedModelRuntimeAdmissionCanWait } from "./prepared-model-runtime-admission.js";
 import { readCapturedPreparedModelRuntimeCatalog } from "./prepared-model-runtime.capture.js";
 import { PreparedModelRuntimeOwnerNotPublishedError } from "./prepared-model-runtime.errors.js";
 import type {
@@ -144,13 +143,7 @@ export class PreparedReplyDispatchPublicationOwner {
       }
       const replacement = this.host.getPendingReplacement();
       const pendingOwner = replacement ? undefined : this.host.getConfiguredOwner(agentId);
-      if (replacement) {
-        assertPreparedModelRuntimeAdmissionCanWait();
-      } else if (pendingOwner?.pending) {
-        assertPreparedModelRuntimeAdmissionCanWait(pendingOwner);
-      }
       if (!demandPrepared) {
-        // Demand can join recovery, so preserve admission before that first wait.
         await this.host.ensureReady(params);
         demandPrepared = true;
         continue;
