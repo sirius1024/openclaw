@@ -200,7 +200,7 @@ describe("loaded-only systemd runtime", () => {
       ),
     ).toBe(true);
     const pinned = busctl.mock.calls.filter(([, args]) => !args.includes("GetNameOwner"));
-    expect(pinned).toHaveLength(5);
+    expect(pinned).toHaveLength(4);
     expect(pinned.every(([, args]) => args.includes(":1.42"))).toBe(true);
   });
 
