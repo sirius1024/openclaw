@@ -8,7 +8,11 @@ import * as sqliteRuntime from "openclaw/plugin-sdk/sqlite-runtime";
 import { vi } from "vitest";
 import { memoryCpuProcessEntrypoints } from "./manager-cpu-entrypoints.js";
 
-export function observePublishedReservations(publishedDb: DatabaseSync, onReserved: () => void) {
+export function observePublishedReservations(
+  publishedDb: DatabaseSync,
+  onReserved: () => void,
+  commandType?: string,
+) {
   const open = sqliteRuntime.openOpenClawAgentSqliteWorkerStore;
   vi.spyOn(sqliteRuntime, "openOpenClawAgentSqliteWorkerStore").mockImplementation(
     async (...args) => {
@@ -18,12 +22,23 @@ export function observePublishedReservations(publishedDb: DatabaseSync, onReserv
         args[2].moduleUrl.href ===
           resolveRuntimeWorkerUrl(memoryCpuProcessEntrypoints.publication).href
       ) {
-        const run = worker.run.bind(worker);
-        vi.spyOn(worker, "run").mockImplementation((...runArgs) => {
-          const result = run(...runArgs);
-          onReserved();
-          return result;
-        });
+        if (commandType) {
+          const execute = worker.execute.bind(worker);
+          vi.spyOn(worker, "execute").mockImplementation((...executeArgs) => {
+            const result = execute(...executeArgs);
+            if (executeArgs[0].type === commandType) {
+              onReserved();
+            }
+            return result;
+          });
+        } else {
+          const run = worker.run.bind(worker);
+          vi.spyOn(worker, "run").mockImplementation((...runArgs) => {
+            const result = run(...runArgs);
+            onReserved();
+            return result;
+          });
+        }
       }
       return worker;
     },

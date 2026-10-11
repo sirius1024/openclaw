@@ -435,12 +435,16 @@ describe("memory manager shared agent connection", () => {
     const queued = createDeferred<void>();
     let armed = false;
     let queuedObserved = false;
-    observePublishedReservations(db, () => {
-      if (armed) {
-        queuedObserved = true;
-        queued.resolve();
-      }
-    });
+    observePublishedReservations(
+      db,
+      () => {
+        if (armed) {
+          queuedObserved = true;
+          queued.resolve();
+        }
+      },
+      "cache.prune",
+    );
     const manager = await fixture.getFreshManager(cfg, "cli");
     expect(managerDatabase(manager) === db).toBe(true);
     await manager.sync({ reason: "baseline", force: true });
