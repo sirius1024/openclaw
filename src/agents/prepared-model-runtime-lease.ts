@@ -3,6 +3,7 @@ import { createAbortError, racePromiseWithAbortSignal } from "../infra/abort-sig
 import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
 import { resolvePluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import { isReservedSystemAgentId } from "../system-agent/agent-id.js";
+import { assertPreparedModelRuntimeAdmissionCanWait } from "./prepared-model-runtime-admission.js";
 import { getPreparedModelRuntimeBorrowedSnapshot } from "./prepared-model-runtime-generation-scope.js";
 import { capturePreparedModelRuntimeCatalog } from "./prepared-model-runtime.capture.js";
 import { isPreparedModelRuntimePluginLifecycleFailure } from "./prepared-model-runtime.errors.js";
@@ -151,6 +152,7 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
     previousAttempt = attempt;
     supersededPublication = undefined;
     if (replacement) {
+      assertPreparedModelRuntimeAdmissionCanWait();
       lastExternalPublication = replacement.promise;
       await racePromiseWithAbortSignal(replacement.promise, options.abortSignal);
       if (context.getPendingReplacement()) {
@@ -180,6 +182,7 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
           const configuredOwner = resolveConfiguredOwnerPublication(context.owners, input);
           if (configuredOwner.matches || !canActivateConfiglessSetup) {
             if (configuredOwner.pending) {
+              assertPreparedModelRuntimeAdmissionCanWait();
               lastExternalPublication = configuredOwner.pending;
               await racePromiseWithAbortSignal(configuredOwner.pending, options.abortSignal);
               continue;
@@ -222,6 +225,7 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
     if (provenance === "run" && context.getGatewayLifecycleActive() && admittedGeneration) {
       const configuredOwner = resolveConfiguredOwner(context.owners, input);
       if (configuredOwner?.pending) {
+        assertPreparedModelRuntimeAdmissionCanWait(configuredOwner);
         lastExternalPublication = configuredOwner.pending;
         await racePromiseWithAbortSignal(
           configuredOwner.pending.catch(() => undefined),
@@ -321,6 +325,7 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
         )) ||
       (options.catalogMode === "live" && existing?.catalogMode === "static");
     if (existing?.pending && ownerGenerationChanged) {
+      assertPreparedModelRuntimeAdmissionCanWait(existing);
       // Do not supersede active discovery. Wait for its owner to settle, then retry against
       // the published identity so same-generation callers still coalesce.
       lastExternalPublication = existing.pending;
@@ -332,6 +337,7 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
     }
     try {
       if (existing?.pending && !ownerGenerationChanged) {
+        assertPreparedModelRuntimeAdmissionCanWait(existing);
         // Matching callers lease the immutable generation they joined even if a queued
         // mismatched caller publishes the next owner immediately after this one settles.
         admission.claim(key, existing);

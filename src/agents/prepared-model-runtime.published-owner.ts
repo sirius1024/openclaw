@@ -1,5 +1,7 @@
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
+import { assertPreparedModelRuntimeAdmissionCanWait } from "./prepared-model-runtime-admission.js";
 import { capturePreparedModelRuntimeCatalog } from "./prepared-model-runtime.capture.js";
+import { isPreparedModelRuntimeMissingOwnerError } from "./prepared-model-runtime.errors.js";
 import { isPreparedModelCatalogFull } from "./prepared-model-runtime.full-catalog.js";
 import {
   PreparedModelRuntimeOwnerNotPublishedError,
@@ -92,6 +94,7 @@ export async function loadPreparedModelRuntimeOwner<T>(
     assertLifetime();
     const replacement = context.getPendingReplacement();
     if (replacement) {
+      assertPreparedModelRuntimeAdmissionCanWait();
       await replacement.promise;
       if (context.getPendingReplacement()) {
         continue;
@@ -102,7 +105,7 @@ export async function loadPreparedModelRuntimeOwner<T>(
     try {
       return await projectPublishedModelRuntimeOwner(input, context, project);
     } catch (error) {
-      if (!(error instanceof PreparedModelRuntimeOwnerNotPublishedError)) {
+      if (!isPreparedModelRuntimeMissingOwnerError(error)) {
         throw error;
       }
     }
@@ -117,7 +120,7 @@ export async function loadPreparedModelRuntimeOwner<T>(
     try {
       return await projectPublishedModelRuntimeOwner(input, context, project);
     } catch (error) {
-      if (!activated || !(error instanceof PreparedModelRuntimeOwnerNotPublishedError)) {
+      if (!activated || !isPreparedModelRuntimeMissingOwnerError(error)) {
         throw error;
       }
       // A concurrent publication boundary may retire the standalone owner between build and read.
@@ -155,6 +158,7 @@ async function projectPublishedModelRuntimeOwner<T>(
   if (replacement) {
     // Individual owners may finish before a multi-owner publication commits. The lifecycle gate
     // makes the generation visible atomically only after every owner and auth mutation is ready.
+    assertPreparedModelRuntimeAdmissionCanWait();
     await replacement.promise;
     assertLifetime();
     return await projectPublishedModelRuntimeOwner(rawInput, context, project);
@@ -179,6 +183,7 @@ async function projectPublishedModelRuntimeOwner<T>(
   // doctor/auth repair, and auth publication replace owners; external edits require restart.
   if (existing?.pending) {
     // Auth republication may be queued behind plugin drainage even for passive metadata reads.
+    assertPreparedModelRuntimeAdmissionCanWait(existing);
     try {
       await existing.pending;
     } catch {
