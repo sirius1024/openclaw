@@ -268,10 +268,8 @@ function admission(database: DatabaseSync, create = true): Admission | undefined
   if (!location || location === ":memory:") {
     return undefined;
   }
-  const record =
-    create && !database.isTransaction
-      ? pathAdmission(location)
-      : state.registry.records.get(expected);
+  const discover = create && !database.isTransaction;
+  const record = discover ? pathAdmission(location) : state.registry.records.get(expected);
   if (record && record.identity !== expected) {
     throw new Error("SQLite database changed identity before admission");
   }
@@ -373,7 +371,7 @@ export function getOrLoadSqliteDatabaseAdmissionForPath<T>(
       throw new Error("SQLite database changed while loading admission facts");
     }
     if (
-      !hasNativeAdmissionOperation(record) &&
+      !hasSqliteNativeAdmissionOperation((database) => admission(database, false) === record) &&
       !(key.schemaDependent && activeWriters(record, 0, exchange) !== 0)
     ) {
       publishFact(record, key, value, generation);
@@ -398,10 +396,6 @@ function publishFact<T>(
   }
   state.registry.publish(record);
   exchange(record);
-}
-
-function hasNativeAdmissionOperation(record: Admission): boolean {
-  return hasSqliteNativeAdmissionOperation((database) => admission(database, false) === record);
 }
 
 function hasForeignSchemaWriter(database: DatabaseSync, record: Admission): boolean {
@@ -478,11 +472,8 @@ export function readSqliteDatabaseWriteRevision(database: DatabaseSync): number 
       : undefined;
   }
   // Missing registrations stay unknown until the lock is released; refreshing waits for the host.
-  return readWriteRevision(
-    record,
-    state.dataWriters.get(database) === record ? 1 : 0,
-    database.isTransaction ? undefined : exchange,
-  );
+  const refresh = database.isTransaction ? undefined : exchange;
+  return readWriteRevision(record, state.dataWriters.get(database) === record ? 1 : 0, refresh);
 }
 
 /** Host row caches retain a physical identity and receipt without opening SQLite. */
