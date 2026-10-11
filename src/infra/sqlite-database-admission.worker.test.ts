@@ -19,6 +19,7 @@ import {
   captureSqliteDatabaseAdmissions,
   hasPendingSqliteDatabaseSchemaMutation,
   readSqliteDatabaseAdmissions,
+  prepareSqliteDatabaseWriter,
   publishSqliteDatabaseAdmission,
   readSqliteDatabaseWriteRevision,
 } from "./sqlite-database-admission.js";
@@ -28,6 +29,7 @@ import type {
 } from "./sqlite-database-admission.task.test-support.js";
 import {
   hostFactKey,
+  workerFactKey,
   type AdmissionOperations,
 } from "./sqlite-database-admission.worker.test-support.js";
 import { admitSqliteSchema, getAdmittedSqliteSchemaFacts } from "./sqlite-schema-facts.js";
@@ -98,6 +100,52 @@ it("assigns a distinct shared generation slot to every admission witness", () =>
   const slots = Object.values(SqliteDatabaseGenerationSlot);
   expect(new Set(slots).size).toBe(slots.length);
   expect(Math.max(...slots)).toBeLessThan(SQLITE_DATABASE_GENERATION_LENGTH);
+});
+
+it("defers unknown writer and fact refresh until the worker releases its transaction", async () => {
+  const location = path.join(tempDirs.make("sqlite-transaction-facts-"), "shared.sqlite");
+  createDatabase(location, 1);
+  const database = openNodeSqliteDatabase(location);
+  admitSqliteSchema(database);
+  const broker = new SqliteWorkerBroker();
+  try {
+    const store = await broker.open<AdmissionOperations>({
+      moduleUrl,
+      databasePath: location,
+      input: undefined,
+    });
+    const result = await broker.runOperation(
+      store!,
+      (scope) => scope.execute({ type: "transactionFacts", input: undefined }),
+      undefined,
+      undefined,
+      () => ({
+        nativeLocations: [location],
+        admission: createSqliteWorkerOperationAdmission((_request, grant) => {
+          // This writer and its facts were absent from the worker's dispatch snapshot.
+          prepareSqliteDatabaseWriter(database);
+          publishSqliteDatabaseAdmission(database, hostFactKey, 42);
+          publishSqliteDatabaseAdmission(database, workerFactKey, 43);
+          grant();
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      transactionLookups: 0,
+      transactionRevision: undefined,
+      transactionHostFact: undefined,
+      transactionWorkerFact: undefined,
+      pendingSchema: true,
+      transactionSchemaHasProof: true,
+      outsideHostFact: 42,
+      outsideWorkerFact: 43,
+    });
+    expect(result.outsideLookups).toBeGreaterThan(0);
+    expect(result.outsideRevision).toBeTypeOf("number");
+  } finally {
+    database.close();
+    await broker.close();
+  }
 });
 
 it("joins host admission created after a worker's operation context before its first DDL", async () => {
