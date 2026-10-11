@@ -1,8 +1,6 @@
 import { ContextConsumer } from "@lit/context";
 import { html, nothing, render, type PropertyValues } from "lit";
 import { property } from "lit/decorators.js";
-import type { UsersListResult } from "../../../packages/gateway-protocol/src/schema/users.js";
-import { buildControlUiUserAvatarPath } from "../../../src/gateway/control-ui-user-avatar-route.js";
 import { selectApplicationSession } from "../app/agent-selection.ts";
 import { applicationContext } from "../app/context.ts";
 import { t } from "../i18n/index.ts";
@@ -11,6 +9,7 @@ import {
   projectPresencePayload,
   type PresenceViewer,
 } from "../lib/presence-users.ts";
+import { profileAvatarUrl, profileDirectory } from "../lib/profile-directory.ts";
 import {
   prepareSessionNavigationHandoff,
   runSessionNavigationIntent,
@@ -29,8 +28,8 @@ import { OpenClawLightDomContentsElement } from "../lit/openclaw-element.ts";
 import { createPresenceActivityController } from "../lit/presence-activity-controller.ts";
 import {
   identityAvatarClass,
+  renderIdentityAvatar,
   renderIdentityAvatarImage,
-  resolveIdentityAvatarView,
 } from "./identity-avatar-view.ts";
 import { renderPersonActivityCard } from "./person-activity-card.ts";
 import { observePersonActivityData } from "./person-activity-data.ts";
@@ -173,15 +172,11 @@ class PersonReference extends OpenClawLightDomContentsElement {
     }
     let person: PresenceViewer | null = null;
     try {
-      const { profiles } = await scope.client.request<UsersListResult>("users.list", {});
-      // Follow only canonical merge edges returned by the authorized directory.
-      const byId = new Map(profiles.map((profile) => [profile.id, profile]));
-      const visited = new Set<string>();
-      let profile = byId.get(profileId);
-      while (profile?.mergedInto && !visited.has(profile.id)) {
-        visited.add(profile.id);
-        profile = byId.get(profile.mergedInto);
-      }
+      const directory = profileDirectory(context.gateway);
+      await directory.load(
+        Boolean(directory.error || (directory.result && !directory.get(profileId))),
+      );
+      const profile = directory.get(profileId);
       if (profile && !profile.mergedInto) {
         person = {
           id: profile.id,
@@ -190,9 +185,7 @@ class PersonReference extends OpenClawLightDomContentsElement {
             profile.displayName?.trim() ||
             profile.githubIdentity?.login ||
             t("presence.card.person"),
-          avatarUrl: profile.hasAvatar
-            ? buildControlUiUserAvatarPath(profile.id, profile.updatedAt)
-            : undefined,
+          avatarUrl: profileAvatarUrl(profile),
           watchedSessions: [],
         };
       }
@@ -300,22 +293,23 @@ class PersonReference extends OpenClawLightDomContentsElement {
   }
 
   override render() {
-    // Mentions carry identity, not avatar availability; directory reads belong to the card.
-    const avatar = resolveIdentityAvatarView({
-      id: this.profileId,
-      identity: { type: "profile", id: this.profileId },
-      name: this.label.replace(/^@/u, ""),
-    });
-    const face = html`<span
-      class=${identityAvatarClass("markdown-person-reference__avatar", avatar)}
-      aria-hidden="true"
-      data-initials=${avatar.fallback.initials}
-      >${renderIdentityAvatarImage({
-        view: avatar,
-        fallbackSelector: ".markdown-person-reference__avatar",
-        ariaHidden: true,
-      })}</span
-    >`;
+    const face = renderIdentityAvatar(
+      {
+        id: this.profileId,
+        identity: { type: "profile", id: this.profileId },
+        name: this.label.replace(/^@/u, ""),
+      },
+      (avatar) => html`<span
+        class=${identityAvatarClass("markdown-person-reference__avatar", avatar)}
+        aria-hidden="true"
+        data-initials=${avatar.fallback.initials}
+        >${renderIdentityAvatarImage({
+          view: avatar,
+          fallbackSelector: ".markdown-person-reference__avatar",
+          ariaHidden: true,
+        })}</span
+      >`,
+    );
     const displayLabel = this.label.startsWith("@")
       ? html`<span class="markdown-person-reference__prefix" aria-hidden="true">@</span
           >${this.label.slice(1)}`

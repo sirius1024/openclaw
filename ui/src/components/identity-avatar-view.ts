@@ -1,4 +1,5 @@
-import { html, noChange, nothing, type AttributePart } from "lit";
+import { ContextEvent } from "@lit/context";
+import { html, noChange, nothing, type AttributePart, type ChildPart } from "lit";
 import { AsyncDirective } from "lit/async-directive.js";
 import { Directive, directive } from "lit/directive.js";
 import { guard } from "lit/directives/guard.js";
@@ -8,6 +9,7 @@ import {
   type ThemeBranding,
 } from "../../../packages/gateway-protocol/src/theme.ts";
 import { isReservedSystemAgentId } from "../../../src/system-agent/agent-id.js";
+import { applicationContext, type ApplicationContext } from "../app/context.ts";
 import { inferControlUiPublicAssetPath } from "../app/public-assets.ts";
 import { currentThemeBranding, subscribeThemeBranding } from "../app/theme-branding.ts";
 import { readAvatarGatewayContext } from "../lib/identity-avatar-context.ts";
@@ -19,6 +21,7 @@ import {
   type IdentityAvatarInput,
   type ResolvedIdentityAvatar,
 } from "../lib/identity-avatar.ts";
+import { profileAvatarUrl, profileDirectory } from "../lib/profile-directory.ts";
 import "../styles/identity-avatar.css";
 import { resolveAvatarHat } from "./agent-avatar-hat.ts";
 import { icons } from "./icons.ts";
@@ -46,6 +49,97 @@ export function resolveIdentityAvatarView(identity: IdentityAvatarInput): Identi
     sourceUrl: avatar.kind === "profile" ? avatar.url : undefined,
     pending: imageUrl !== null && typeof imageUrl !== "string",
   };
+}
+
+type AvatarRenderer = (view: IdentityAvatarView) => unknown;
+
+/** Subscribe at the existing DOM boundary so avatar layout and child selectors stay intact. */
+class ProfileAvatarDirective extends AsyncDirective {
+  private identity: IdentityAvatarInput = {};
+  private renderer: AvatarRenderer = () => undefined;
+  private context?: ApplicationContext;
+  private part?: ChildPart;
+  private stopContext?: () => void;
+  private stopDirectory?: () => void;
+
+  override render(identity: IdentityAvatarInput, renderer: AvatarRenderer) {
+    this.identity = identity;
+    this.renderer = renderer;
+    return this.renderAvatar();
+  }
+
+  override update(part: ChildPart, [identity, renderer]: [IdentityAvatarInput, AvatarRenderer]) {
+    this.part = part;
+    // A newly cloned template is inserted after directive updates finish.
+    queueMicrotask(() => this.bind());
+    return this.render(identity, renderer);
+  }
+
+  private renderAvatar() {
+    const gateway = this.context?.gateway;
+    const profile =
+      gateway && this.identity.identity?.type === "profile"
+        ? profileDirectory(gateway).get(this.identity.identity.id)
+        : undefined;
+    const self = gateway?.snapshot.selfUser;
+    const selfAvatar =
+      self?.identity?.id === this.identity.identity?.id ? self?.avatarUrl : undefined;
+    return this.renderer(
+      resolveIdentityAvatarView({
+        ...this.identity,
+        // Published presence/upload URLs can be newer than the cached directory.
+        profileAvatarUrl:
+          this.identity.profileAvatarUrl?.trim() || selfAvatar || profileAvatarUrl(profile),
+      }),
+    );
+  }
+
+  private bind() {
+    if (!this.isConnected || this.stopDirectory || !this.part) {
+      return;
+    }
+    const host = this.part.options?.host;
+    const target = host instanceof HTMLElement ? host : this.part.startNode?.parentElement;
+    target?.dispatchEvent(
+      new ContextEvent(
+        applicationContext,
+        target,
+        (context, stop) => {
+          this.stopContext = stop;
+          if (this.context?.gateway !== context.gateway || !this.stopDirectory) {
+            this.stopDirectory?.();
+            this.context = context;
+            this.stopDirectory = profileDirectory(context.gateway).subscribe(() =>
+              this.setValue(this.renderAvatar()),
+            );
+          }
+          this.setValue(this.renderAvatar());
+        },
+        true,
+      ),
+    );
+  }
+
+  protected override disconnected() {
+    this.stopContext?.();
+    this.stopDirectory?.();
+    this.stopContext = undefined;
+    this.stopDirectory = undefined;
+    this.context = undefined;
+  }
+
+  protected override reconnected() {
+    this.bind();
+  }
+}
+
+const profileAvatar = directive(ProfileAvatarDirective);
+
+/** Typed profile surfaces share directory availability and upgrade without adding DOM wrappers. */
+export function renderIdentityAvatar(identity: IdentityAvatarInput, renderer: AvatarRenderer) {
+  return identity.identity?.type === "profile"
+    ? html`${profileAvatar(identity, renderer)}`
+    : html`${renderer(resolveIdentityAvatarView(identity))}`;
 }
 
 type AvatarState = "none" | "pending" | "loaded" | "failed";
