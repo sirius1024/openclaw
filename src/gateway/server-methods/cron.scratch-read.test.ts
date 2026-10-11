@@ -1,5 +1,4 @@
 import { DatabaseSync } from "node:sqlite";
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { createOperationalRunInstanceRef } from "../../agents/admitted-run-context.js";
@@ -15,8 +14,8 @@ import {
   releaseAgentRunDelegatedAuthority,
 } from "../../infra/agent-run-registry.js";
 import { runSqliteImmediateTransactionSync } from "../../infra/sqlite-transaction.js";
-import * as workerAdmission from "../../infra/sqlite-worker-operation-admission.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
+import * as stateWorker from "../../state/openclaw-state-worker-store.js";
 import { createTestGatewayScheduler } from "../../test-utils/gateway-scheduler-clock.js";
 import { createAgentRuntimeApprovalAuthorityValidator } from "../agent-runtime-approval-authority.js";
 import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
@@ -370,42 +369,29 @@ describe("scheduled automation scratch RPC", () => {
   });
 
   it.each(["invocation closes", "claim is released"] as const)(
-    "rolls back a scratch write when the %s at native commit admission",
+    "rejects a scratch write when the %s after worker preparation before dispatch",
     async (transition) => {
       await withScheduledScratch(
         async ({ cron, job, context, client, retireInvocation, releaseClaim }) => {
-          const createAdmission = workerAdmission.createSqliteWorkerOperationAdmission;
-          let commitObserved = false;
+          const runWorker = stateWorker.runOpenClawStateWorkerOperation;
+          let dispatchObserved = false;
           const admission = vi
-            .spyOn(workerAdmission, "createSqliteWorkerOperationAdmission")
-            .mockImplementation((admit, attachment) => {
-              let nonce: string | undefined;
-              return createAdmission((request, grant) => {
-                const facts = request.facts;
-                if (
-                  request.stage === "transaction" &&
-                  isRecord(facts) &&
-                  typeof facts.nonce === "string"
-                ) {
-                  nonce = facts.nonce;
-                }
-                if (
-                  request.stage === "commit" &&
-                  nonce &&
-                  isRecord(facts) &&
-                  facts.nonce === nonce &&
-                  facts.bytes instanceof Uint8Array
-                ) {
-                  commitObserved = true;
+            .spyOn(stateWorker, "runOpenClawStateWorkerOperation")
+            .mockImplementationOnce((workerContext, operation, options) =>
+              runWorker(
+                workerContext,
+                (scope) => {
+                  dispatchObserved = true;
                   if (transition === "invocation closes") {
                     retireInvocation();
                   } else {
                     releaseClaim();
                   }
-                }
-                admit(request, grant);
-              }, attachment);
-            });
+                  return operation(scope);
+                },
+                options,
+              ),
+            );
           try {
             const write = await invokeScheduledScratch(
               "cron.scratch.set",
@@ -416,7 +402,7 @@ describe("scheduled automation scratch RPC", () => {
               },
               { context, client },
             );
-            expect(commitObserved).toBe(true);
+            expect(dispatchObserved).toBe(true);
             expect(
               client.internal?.agentRuntimeIdentity?.cronSelfManagementContext?.expiresAtMs,
             ).toBeGreaterThan(Date.now());

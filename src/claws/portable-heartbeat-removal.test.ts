@@ -1,7 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expectDefined } from "@openclaw/normalization-core/expect";
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { ok } from "@openclaw/normalization-core/result";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -18,7 +17,6 @@ import {
 } from "../cron/service.test-harness.js";
 import { cronStoreKey } from "../cron/store/key.js";
 import { upsertCronJobRow } from "../cron/store/row-codec.js";
-import * as workerAdmission from "../infra/sqlite-worker-operation-admission.js";
 import { createTestGatewayScheduler } from "../test-utils/gateway-scheduler-clock.js";
 import { upsertClawCronRef } from "./cron.js";
 import { digestClawValue } from "./digest.js";
@@ -81,7 +79,7 @@ describe("portable heartbeat removal custody", () => {
         service.cron,
         () => {
           if (!requestCurrent) {
-            throw new Error("Removal request authority revoked at commit");
+            throw new Error("Removal request authority revoked before dispatch");
           }
         },
       );
@@ -114,7 +112,7 @@ describe("portable heartbeat removal custody", () => {
               "install",
               "lease",
               "source",
-              "commit",
+              "authority",
             ] as const) {
               const expected = await readPortableHeartbeatState("worker", f.config, { env: f.env });
               const expectedRef = expectDefined(expected.ref, "Portable Claw ownership");
@@ -126,24 +124,7 @@ describe("portable heartbeat removal custody", () => {
               const facts = await readRemovalWireFacts(deletion);
               const remove = service.cron.remove.bind(service.cron);
               const publishRemoval = vi.spyOn(activeJobs, "noteActiveCronJobRemoval");
-              const createAdmission = workerAdmission.createSqliteWorkerOperationAdmission;
-              let commitWitnessed = false;
-              const admission = vi
-                .spyOn(workerAdmission, "createSqliteWorkerOperationAdmission")
-                .mockImplementation((admit, attachment) =>
-                  createAdmission((request, grant) => {
-                    if (
-                      race === "commit" &&
-                      request.stage === "commit" &&
-                      isRecord(request.facts) &&
-                      typeof request.facts.nonce === "string"
-                    ) {
-                      requestCurrent = false;
-                      commitWitnessed = true;
-                    }
-                    admit(request, grant);
-                  }, attachment),
-                );
+              let authorityRevocationWitnessed = false;
               const boundary = vi
                 .spyOn(service.cron, "remove")
                 .mockImplementationOnce(async (id, opts) => {
@@ -161,6 +142,10 @@ describe("portable heartbeat removal custody", () => {
                     );
                   }
                   retained = await readPortableHeartbeatState("worker", f.config, { env: f.env });
+                  if (race === "authority") {
+                    requestCurrent = false;
+                    authorityRevocationWitnessed = true;
+                  }
                   return remove(id, opts);
                 });
               try {
@@ -193,14 +178,14 @@ describe("portable heartbeat removal custody", () => {
                     ? /lease/iu
                     : race === "source"
                       ? /physical database/iu
-                      : race === "commit"
-                        ? /authority revoked at commit/iu
+                      : race === "authority"
+                        ? /authority revoked before dispatch/iu
                         : /changed/iu,
                 );
                 expect(boundary, race).toHaveBeenCalledOnce();
                 expect(publishRemoval, race).not.toHaveBeenCalled();
-                if (race === "commit") {
-                  expect(commitWitnessed).toBe(true);
+                if (race === "authority") {
+                  expect(authorityRevocationWitnessed).toBe(true);
                 }
                 expect(
                   await readPortableHeartbeatState("worker", f.config, { env: f.env }),
@@ -213,7 +198,6 @@ describe("portable heartbeat removal custody", () => {
               } finally {
                 requestCurrent = true;
                 boundary.mockRestore();
-                admission.mockRestore();
                 publishRemoval.mockRestore();
                 if (race === "definition" && f.jobs().some((job) => job.id === own.id)) {
                   await service.cron.update(own.id, { name: own.name });

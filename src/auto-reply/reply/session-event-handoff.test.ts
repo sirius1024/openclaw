@@ -41,7 +41,6 @@ import * as gatewayWork from "../../process/gateway-work-admission.js";
 import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { resolveOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.paths.js";
 import { createTestGatewayScheduler } from "../../test-utils/gateway-scheduler-clock.js";
-import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import { registerSessionEventDeletionEnvironmentTests } from "./session-event-deletion-environment.cases.js";
 import {

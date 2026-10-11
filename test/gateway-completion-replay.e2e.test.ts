@@ -7,6 +7,7 @@ import { stripInternalRuntimeContext } from "../src/agents/internal-runtime-cont
 import { loadSubagentRegistryFromSqlite } from "../src/agents/subagents/registry/subagent-registry-state.fixture.test-support.js";
 import type { OpenClawConfig } from "../src/config/types.openclaw.js";
 import { connectGatewayClient, disconnectGatewayClient } from "../src/gateway/test-helpers.e2e.js";
+import { stripEnvelope } from "../src/shared/chat-envelope.js";
 import { closeOpenClawStateDatabaseForTest } from "../src/state/openclaw-state-db.js";
 import {
   writeOpenAiResponsesSse,
@@ -238,9 +239,11 @@ async function startModel() {
     const input = body.input ?? [];
     const userText = (item: ModelInput) =>
       stripInternalRuntimeContext(
-        typeof item.content === "string"
-          ? item.content
-          : (item.content ?? []).map((part) => part.text ?? "").join("\n"),
+        stripEnvelope(
+          typeof item.content === "string"
+            ? item.content
+            : (item.content ?? []).map((part) => part.text ?? "").join("\n"),
+        ),
       ).trim();
     const latestUser = input.toReversed().find((item) => item.role === "user" && userText(item));
     const text = latestUser ? userText(latestUser) : undefined;

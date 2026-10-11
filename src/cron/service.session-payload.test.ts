@@ -11,10 +11,9 @@ import {
   createStartedCronServiceWithFinishedBarrier,
   setupCronServiceSuite,
 } from "./service.test-harness.js";
-import type { CronJobExecutionResult } from "./service/timer-execution-timeout.js";
 import { loadCronStore } from "./store.js";
 import { inspectActiveCronRunReceipt } from "./store/run-receipt-store.test-support.js";
-import type { CronRunOutcome } from "./types.js";
+import type { CronJobExecutionResult, CronRunOutcome } from "./types.js";
 
 const { logger, makeStorePath } = setupCronServiceSuite({ prefix: "cron-session-payload-" });
 

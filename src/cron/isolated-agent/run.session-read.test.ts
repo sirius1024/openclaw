@@ -8,6 +8,7 @@ import {
   setRuntimeConfigSnapshot,
 } from "../../config/runtime-snapshot.js";
 import { writeSessionEntry } from "../../config/sessions/session-accessor.sqlite-entry-store.js";
+import { replaceTranscriptEventsSync } from "../../config/sessions/session-accessor.sqlite-transcript-write.test-support.js";
 import * as lifecycleProjection from "../../config/sessions/session-lifecycle-projection.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -76,7 +77,7 @@ describe("cron session preparation", () => {
       lastInteractionAt: staleAt,
     });
     const transcript = { ...target, sessionId };
-    actualAccessor.replaceTranscriptEventsSync(transcript, [
+    replaceTranscriptEventsSync(transcript, [
       { type: "session", id: sessionId, version: 3, timestamp: new Date(staleAt).toISOString() },
       {
         type: "message",
@@ -176,7 +177,7 @@ describe("cron session preparation", () => {
       };
       await actualAccessor.replaceSessionEntry(target, original);
       const transcript = { ...target, sessionId };
-      actualAccessor.replaceTranscriptEventsSync(transcript, [
+      replaceTranscriptEventsSync(transcript, [
         { type: "session", id: sessionId, version: 3, timestamp: new Date(staleAt).toISOString() },
       ]);
       const cfg: OpenClawConfig = {

@@ -279,11 +279,10 @@ function writeModelResponse(response: ServerResponse, sequence: number): void {
       { type: "response.output_item.added", output_index: 0, item: compaction },
       { type: "response.output_item.done", output_index: 0, item: compaction },
       {
-        type: "response.incomplete",
+        type: "response.completed",
         response: {
           id: "resp_gateway_replay_1",
-          status: "incomplete",
-          incomplete_details: { reason: "max_output_tokens" },
+          status: "completed",
           output: [compaction],
           usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
         },

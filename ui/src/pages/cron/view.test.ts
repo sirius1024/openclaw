@@ -584,10 +584,10 @@ describe("cron view editor", () => {
     expect(onRun).toHaveBeenCalledWith(job, "force");
     const pause = getElement(
       list,
-      `[data-test-id="cron-row-toggle-${job.id}"] wa-switch`,
-      HTMLElement,
+      `[data-test-id="cron-row-toggle-${job.id}"] input.settings-toggle__input`,
+      HTMLInputElement,
     );
-    Object.assign(pause, { checked: false });
+    pause.checked = false;
     pause.dispatchEvent(new Event("change", { bubbles: true }));
     expect(onToggle).toHaveBeenCalledWith(job, false);
     const listMenu = getElement(list, "wa-dropdown.cron-job-menu", HTMLElement);
