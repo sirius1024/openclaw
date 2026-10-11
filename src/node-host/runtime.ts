@@ -628,13 +628,7 @@ export async function prepareNodeHostRuntime(params?: {
                 clearTimeout(initializationRetry);
                 initializationRetry = undefined;
               }
-              if (!wasClosing || disconnectCleanupFailed) {
-                // cancelAll publishes the cleanup barrier joined below.
-                void this.cancelAll();
-              }
               const watcherClose = stopAvailabilityWatch();
-              // Startup observes this signal before either independent owner is joined.
-              mcpAbort.abort();
               const disconnectClose = disconnectCleanup;
               supervisorClose ??= Promise.resolve()
                 .then(() => workerSupervisor?.close())
@@ -656,6 +650,11 @@ export async function prepareNodeHostRuntime(params?: {
               closePromise = undefined;
               throw error;
             });
+          if (!wasClosing || disconnectCleanupFailed) {
+            // Publish the close promise before cancellation can reenter close.
+            void this.cancelAll();
+          }
+          mcpAbort.abort();
           return closePromise;
         },
       };
